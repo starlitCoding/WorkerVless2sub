@@ -10,7 +10,7 @@ let addressescsv = [];
 let DLS = 7;
 let remarkIndex = 1;//CSV备注所在列偏移量
 
-let subConverter = 'SUBAPI.cmliussss.net';
+let subConverter = 'subapi.cmliussss.net';
 let subConfig = atob('aHR0cHM6Ly9yYXcuZ2l0aHVidXNlcmNvbnRlbnQuY29tL2NtbGl1L0FDTDRTU1IvbWFpbi9DbGFzaC9jb25maWcvQUNMNFNTUl9PbmxpbmVfRnVsbF9NdWx0aU1vZGUuaW5p');
 let subProtocol = 'https';
 let noTLS = 'false';
@@ -1016,6 +1016,7 @@ export default {
 		} else {
 			subConverter = subConverter.split("//")[1] || subConverter;
 		}
+		subConverter = subConverter.toLowerCase();
 		subConfig = env.SUBCONFIG || subConfig;
 		FileName = env.SUBNAME || FileName;
 		socks5DataURL = env.SOCKS5DATA || socks5DataURL;
@@ -1493,7 +1494,10 @@ export default {
 				console.log("notlsresponseBody: " + notlsresponseBody);
 			}
 
-			if (协议类型 == 'VMess' && (userAgent.includes('clash') || userAgent.includes('meta') || userAgent.includes('mihomo') || (format === 'clash' && !isSubConverterRequest)) && !userAgent.includes('nekobox') && !userAgent.includes('cf-workers-sub')) {
+			const isClashRequest = 协议类型 == 'VMess' && (userAgent.includes('clash') || userAgent.includes('meta') || userAgent.includes('mihomo') || (format === 'clash' && !isSubConverterRequest)) && !userAgent.includes('nekobox') && !userAgent.includes('cf-workers-sub');
+			const clashConverter = (url.searchParams.get('converter') || url.searchParams.get('external') || '').toLowerCase();
+			const useExternalClashConverter = clashConverter === 'external' || clashConverter === 'subconverter' || clashConverter === '1' || clashConverter === 'true';
+			if (isClashRequest && !useExternalClashConverter) {
 				return new Response(vmessLinksToClashYaml(combinedContent), {
 					headers: {
 						...responseHeaders,
@@ -1502,7 +1506,12 @@ export default {
 				});
 			}
 
-			if (协议类型 == atob('VHJvamFu') && (userAgent.includes('surge') || (format === 'surge' && !isSubConverterRequest)) && !userAgent.includes('cf-workers-sub')) {
+			if (isClashRequest && useExternalClashConverter) {
+				const vmessLinks = combinedContent.split('\n');
+				const vmessLinksJ8 = generateFakeInfo(vmessLinks.join('|'), uuid, host);
+				subConverterUrl = `${subProtocol}://${subConverter}/sub?target=clash&url=${encodeURIComponent(vmessLinksJ8)}&insert=false&config=${encodeURIComponent(subConfig)}&emoji=true&list=false&tfo=false&scv=${scv}&fdn=false&sort=false&new_name=true`;
+				responseHeaders["content-type"] = "text/yaml; charset=utf-8";
+			} else if (协议类型 == atob('VHJvamFu') && (userAgent.includes('surge') || (format === 'surge' && !isSubConverterRequest)) && !userAgent.includes('cf-workers-sub')) {
 				const 特洛伊Links = combinedContent.split('\n');
 				const 特洛伊LinksJ8 = generateFakeInfo(特洛伊Links.join('|'), uuid, host);
 				subConverterUrl = `${subProtocol}://${subConverter}/sub?target=surge&ver=4&url=${encodeURIComponent(特洛伊LinksJ8)}&insert=false&config=${encodeURIComponent(subConfig)}&emoji=true&list=false&xudp=false&udp=false&tfo=false&expand=true&scv=${scv}&fdn=false`;
@@ -1538,7 +1547,8 @@ export default {
 		}
 
 		try {
-			const subConverterResponse = await fetch(subConverterUrl, { headers: { 'User-Agent': `v2rayN/${FileName + atob('IChodHRwczovL2dpdGh1Yi5jb20vY21saXUvRWRnZU9uZS1QYWdlcy1CZXN0SVAyU1VCKQ==')}` } });
+			const subConverterUserAgent = `v2rayN/${encodeURIComponent(FileName)}${atob('IChodHRwczovL2dpdGh1Yi5jb20vY21saXUvRWRnZU9uZS1QYWdlcy1CZXN0SVAyU1VCKQ==')}`;
+			const subConverterResponse = await fetch(subConverterUrl, { headers: { 'User-Agent': subConverterUserAgent } });
 
 			if (!subConverterResponse.ok) {
 				throw new Error(`Error fetching subConverterUrl: ${subConverterResponse.status} ${subConverterResponse.statusText}`);
