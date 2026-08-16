@@ -464,6 +464,77 @@ function utf8ToBase64(str) {
 	return btoa(unescape(encodeURIComponent(str)));
 }
 
+function base64ToUtf8(str) {
+	return decodeURIComponent(escape(atob(str)));
+}
+
+function yamlString(value) {
+	return JSON.stringify(String(value ?? ''));
+}
+
+function vmessLinksToClashYaml(content) {
+	const proxies = content
+		.split(/\r?\n/)
+		.map(line => line.trim())
+		.filter(line => line.startsWith('vmess://'))
+		.map(line => JSON.parse(base64ToUtf8(line.slice('vmess://'.length))));
+
+	const proxyNames = proxies.map(proxy => proxy.ps || proxy.add);
+	const proxyBlocks = proxies.map(proxy => {
+		const tls = proxy.tls === 'tls';
+		const port = Number(proxy.port);
+		const lines = [
+			`  - name: ${yamlString(proxy.ps || proxy.add)}`,
+			`    type: vmess`,
+			`    server: ${yamlString(proxy.add)}`,
+			`    port: ${Number.isNaN(port) ? yamlString(proxy.port) : port}`,
+			`    uuid: ${yamlString(proxy.id)}`,
+			`    alterId: ${Number(proxy.aid || 0)}`,
+			`    cipher: ${yamlString(proxy.scy || 'auto')}`,
+			`    udp: true`,
+			`    tls: ${tls ? 'true' : 'false'}`,
+		];
+
+		if (tls && proxy.sni) lines.push(`    servername: ${yamlString(proxy.sni)}`);
+		if (proxy.alpn) {
+			const alpnItems = String(proxy.alpn).split(',').map(item => item.trim()).filter(Boolean);
+			if (alpnItems.length > 0) {
+				lines.push(`    alpn:`);
+				for (const item of alpnItems) lines.push(`      - ${yamlString(item)}`);
+			}
+		}
+		if (proxy.net === 'ws') {
+			lines.push(`    network: ws`);
+			lines.push(`    ws-opts:`);
+			lines.push(`      path: ${yamlString(proxy.path || '/')}`);
+			if (proxy.host) {
+				lines.push(`      headers:`);
+				lines.push(`        Host: ${yamlString(proxy.host)}`);
+			}
+		}
+		return lines.join('\n');
+	});
+
+	const groupProxyLines = proxyNames.map(name => `      - ${yamlString(name)}`).join('\n');
+
+	return [
+		`mixed-port: 7890`,
+		`allow-lan: false`,
+		`mode: rule`,
+		`log-level: info`,
+		`proxies:`,
+		proxyBlocks.join('\n'),
+		`proxy-groups:`,
+		`  - name: "PROXY"`,
+		`    type: select`,
+		`    proxies:`,
+		groupProxyLines,
+		`rules:`,
+		`  - MATCH,PROXY`,
+		``,
+	].join('\n');
+}
+
 async function subHtml(request) {
 	const url = new URL(request.url);
 	const HTML = `
@@ -541,7 +612,7 @@ async function subHtml(request) {
 						font-weight: 500;
 					}
 					
-					input {
+					input, textarea {
 						width: 100%;
 						padding: 12px;
 						border: 2px solid rgba(0, 0, 0, 0.15);
@@ -551,7 +622,13 @@ async function subHtml(request) {
 						box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.03);
 					}
 
-					input:focus {
+					textarea {
+						min-height: 140px;
+						resize: vertical;
+						font-family: monospace;
+					}
+
+					input:focus, textarea:focus {
 						outline: none;
 						border-color: var(--primary-color);
 						box-shadow: 0 0 0 3px rgba(67, 97, 238, 0.15),
@@ -780,12 +857,16 @@ async function subHtml(request) {
 							${网站头像}
 							<h1>${FileName}</h1>
 						</div>
-					<div class="input-group">
-						<label for="link">节点链接</label>
-						<input type="text" id="link" placeholder="请输入 VMess / VLESS / Trojan 链接">
-					</div>
-					
-					<button onclick="generateLink()">生成优选订阅</button>
+						<div class="input-group">
+							<label for="link">节点链接</label>
+							<input type="text" id="link" placeholder="请输入 VMess / VLESS / Trojan 链接">
+						</div>
+						<div class="input-group">
+							<label for="addresses">优选 IP 列表</label>
+							<textarea id="addresses" placeholder="每行一个优选 IP，可带端口和备注，例如：&#10;104.27.96.219:443#LAX-01&#10;104.24.164.58:443#LAX-02"></textarea>
+						</div>
+
+						<button onclick="generateLink()">生成优选订阅</button>
 					
 					<div class="input-group">
 						<div style="display: flex; align-items: center;">
@@ -855,8 +936,13 @@ async function subHtml(request) {
 	
 					function generateLink() {
 						const link = document.getElementById('link').value;
+						const addresses = document.getElementById('addresses').value.trim();
 						if (!link) {
 							alert('请输入节点链接');
+							return;
+						}
+						if (!addresses) {
+							alert('请输入优选 IP 列表');
 							return;
 						}
 						
@@ -869,7 +955,7 @@ async function subHtml(request) {
 							if (isVMess){
 								const vmessLink = link.split('vmess://')[1];
 								const vmessJson = JSON.parse(atob(vmessLink));
-								
+
 								const host = vmessJson.host;
 								const uuid = vmessJson.id;
 								const path = vmessJson.path || '/';
@@ -878,15 +964,15 @@ async function subHtml(request) {
 								const alpn = vmessJson.alpn || '';
 								const alterId = vmessJson.aid || 0;
 								const security = vmessJson.scy || 'auto';
-								const domain = window.location.hostname;
-								
-								subLink = \`https://\${domain}/sub?host=\${host}&uuid=\${uuid}&path=\${encodeURIComponent(path)}&sni=\${sni}&type=\${type}&alpn=\${encodeURIComponent(alpn)}&alterid=\${alterId}&security=\${security}\`;
+								const origin = window.location.origin;
+
+								subLink = \`\${origin}/sub?host=\${host}&uuid=\${uuid}&path=\${encodeURIComponent(path)}&sni=\${sni}&type=\${type}&alpn=\${encodeURIComponent(alpn)}&alterid=\${alterId}&security=\${security}&add=\${encodeURIComponent(addresses)}\`;
 							} else {
 								const uuid = link.split("//")[1].split("@")[0];
 								const search = link.split("?")[1].split("#")[0];
-								const domain = window.location.hostname;
-								
-								subLink = \`https://\${domain}/sub?\${uuidType}=\${uuid}&\${search}\`;
+								const origin = window.location.origin;
+
+								subLink = \`\${origin}/sub?\${uuidType}=\${uuid}&\${search}&add=\${encodeURIComponent(addresses)}\`;
 							}
 							document.getElementById('result').value = subLink;
 	
@@ -967,10 +1053,10 @@ export default {
 
 		link = env.LINK || link;
 
-		if (env.ADD) addresses = await 整理(env.ADD);
-		if (env.ADDAPI) addressesapi = await 整理(env.ADDAPI);
-		if (env.ADDNOTLS) addressesnotls = await 整理(env.ADDNOTLS);
-		if (env.ADDNOTLSAPI) addressesnotlsapi = await 整理(env.ADDNOTLSAPI);
+		addresses = env.ADD ? await 整理(env.ADD) : [];
+		addressesapi = env.ADDAPI ? await 整理(env.ADDAPI) : [];
+		addressesnotls = env.ADDNOTLS ? await 整理(env.ADDNOTLS) : [];
+		addressesnotlsapi = env.ADDNOTLSAPI ? await 整理(env.ADDNOTLSAPI) : [];
 		function moveHttpUrls(sourceArray, targetArray) {
 			if (!Array.isArray(sourceArray) || sourceArray.length === 0) return sourceArray || [];
 			const httpRegex = /^https?:\/\//i;
@@ -983,7 +1069,7 @@ export default {
 		}
 		addresses = moveHttpUrls(addresses, addressesapi);
 		addressesnotls = moveHttpUrls(addressesnotls, addressesnotlsapi);
-		if (env.ADDCSV) addressescsv = await 整理(env.ADDCSV);
+		addressescsv = env.ADDCSV ? await 整理(env.ADDCSV) : [];
 		DLS = Number(env.DLS) || DLS;
 		remarkIndex = Number(env.CSVREMARK) || remarkIndex;
 
@@ -1064,6 +1150,10 @@ export default {
 			path = url.searchParams.get('path');
 			sni = url.searchParams.get('sni') || host;
 			type = url.searchParams.get('type') || type;
+			if (url.searchParams.has('add')) addresses = await 整理(url.searchParams.get('add'));
+			if (url.searchParams.has('addapi')) addressesapi = await 整理(url.searchParams.get('addapi'));
+			if (url.searchParams.has('addnotls')) addressesnotls = await 整理(url.searchParams.get('addnotls'));
+			if (url.searchParams.has('addnotlsapi')) addressesnotlsapi = await 整理(url.searchParams.get('addnotlsapi'));
 			scv = url.searchParams.get('allowInsecure') == '1' ? 'true' : (url.searchParams.get('scv') || scv);
 			const mode = url.searchParams.get('mode') || null;
 			const extra = url.searchParams.get('extra') || null;
@@ -1158,8 +1248,6 @@ export default {
 				return envKey === 'URL302' ? Response.redirect(URL, 302) : fetch(new Request(URL, request));
 			}
 			return await subHtml(request);
-		} else if ((userAgent.includes('clash') || userAgent.includes('meta') || userAgent.includes('mihomo') || (format === 'clash' && !isSubConverterRequest)) && !userAgent.includes('nekobox') && !userAgent.includes('cf-workers-sub')) {
-			subConverterUrl = `${subProtocol}://${subConverter}/sub?target=clash&url=${encodeURIComponent(subConverterUrl)}&insert=false&config=${encodeURIComponent(subConfig)}&emoji=true&list=false&tfo=false&scv=${scv}&fdn=false&sort=false&new_name=true`;
 		} else if ((userAgent.includes('sing-box') || userAgent.includes('singbox') || (format === 'singbox' && !isSubConverterRequest)) && !userAgent.includes('cf-workers-sub')) {
 			if (协议类型 == 'VMess' && url.href.includes('path=')) {
 				const 路径参数前部分 = url.href.split('path=')[0];
@@ -1280,7 +1368,7 @@ export default {
 					}
 
 					if (协议类型 == 'VMess') {
-						const vmessLink = `vmess://${utf8ToBase64(`{"v":"2","ps":"${addressid + EndPS}","add":"${address}","port":"${port}","id":"${uuid}","aid":"${额外ID}","scy":"${加密方式}","net":"ws","type":"${type}","host":"${host}","path":"${path}","tls":"","sni":"","alpn":"${encodeURIComponent(alpn)}","fp":""}`)}`;
+						const vmessLink = `vmess://${utf8ToBase64(`{"v":"2","ps":"${addressid + EndPS}","add":"${address}","port":${Number.isNaN(Number(port)) ? JSON.stringify(port) : Number(port)},"id":"${uuid}","aid":"${额外ID}","scy":"${加密方式}","net":"ws","type":"${type}","host":"${host}","path":"${path}","tls":"","sni":"","alpn":"${alpn}","fp":""}`)}`;
 						return vmessLink;
 					} else {
 						const 为烈士Link = `${atob(atob('ZG14bGMzTTZMeTg9')) + uuid}@${address}:${port}?security=&type=${type}&host=${host}&path=${encodeURIComponent(path)}&encryption=none#${encodeURIComponent(addressid + EndPS)}`;
@@ -1379,7 +1467,7 @@ export default {
 				}
 
 				if (协议类型 == 'VMess') {
-					const vmessLink = `vmess://${utf8ToBase64(`{"v":"2","ps":"${addressid + 节点备注}","add":"${address}","port":"${port}","id":"${uuid}","aid":"${额外ID}","scy":"${加密方式}","net":"ws","type":"${type}","host":"${伪装域名}","path":"${最终路径}","tls":"tls","sni":"${sni}","alpn":"${encodeURIComponent(alpn)}","fp":"","allowInsecure":"${scv == 'true' ? '1' : '0'}","fragment":"1,40-60,30-50,tlshello"}`)}`;
+					const vmessLink = `vmess://${utf8ToBase64(`{"v":"2","ps":"${addressid + 节点备注}","add":"${address}","port":${Number.isNaN(Number(port)) ? JSON.stringify(port) : Number(port)},"id":"${uuid}","aid":"${额外ID}","scy":"${加密方式}","net":"ws","type":"${type}","host":"${伪装域名}","path":"${最终路径}","tls":"tls","sni":"${sni}","alpn":"${alpn}","fp":"","allowInsecure":${scv == 'true' ? 'true' : 'false'}}`)}`;
 					return vmessLink;
 				} else if (协议类型 == atob('VHJvamFu')) {
 					const 特洛伊Link = `${atob(atob('ZEhKdmFtRnVPaTh2')) + uuid}@${address}:${port}?security=tls&sni=${sni}&alpn=${encodeURIComponent(alpn)}&fp=random&type=${type}&host=${伪装域名}&path=${encodeURIComponent(最终路径) + (scv == 'true' ? '&allowInsecure=1' : '')}&fragment=${encodeURIComponent('1,40-60,30-50,tlshello')}#${encodeURIComponent(addressid + 节点备注)}`;
@@ -1403,6 +1491,15 @@ export default {
 			if (notlsresponseBody && noTLS == 'true') {
 				combinedContent += '\n' + notlsresponseBody;
 				console.log("notlsresponseBody: " + notlsresponseBody);
+			}
+
+			if (协议类型 == 'VMess' && (userAgent.includes('clash') || userAgent.includes('meta') || userAgent.includes('mihomo') || (format === 'clash' && !isSubConverterRequest)) && !userAgent.includes('nekobox') && !userAgent.includes('cf-workers-sub')) {
+				return new Response(vmessLinksToClashYaml(combinedContent), {
+					headers: {
+						...responseHeaders,
+						"content-type": "text/yaml; charset=utf-8",
+					},
+				});
 			}
 
 			if (协议类型 == atob('VHJvamFu') && (userAgent.includes('surge') || (format === 'surge' && !isSubConverterRequest)) && !userAgent.includes('cf-workers-sub')) {
