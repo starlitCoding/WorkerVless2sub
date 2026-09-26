@@ -153,3 +153,31 @@ test('can route VMess Clash subscriptions through the external converter', async
     globalThis.fetch = originalFetch;
   }
 });
+
+test('does not leak missing built-in UUID warning into custom VLESS subscriptions', async () => {
+  await worker.fetch(new Request('https://example.com:2083/auto', {
+    headers: { 'User-Agent': 'Shadowrocket' },
+  }), {
+    HOST: 'star.shadowrocket666.dpdns.org',
+  });
+
+  const url = new URL('https://example.com:2083/sub');
+  url.searchParams.set('uuid', 'e9dcc180-2687-4140-9bf3-ad6fa0a96383');
+  url.searchParams.set('alpn', 'h2,http/1.1,h3');
+  url.searchParams.set('encryption', 'none');
+  url.searchParams.set('fp', 'chrome');
+  url.searchParams.set('host', 'star.shadowrocket666.dpdns.org');
+  url.searchParams.set('path', '/vlessws');
+  url.searchParams.set('security', 'tls');
+  url.searchParams.set('sni', 'star.shadowrocket666.dpdns.org');
+  url.searchParams.set('type', 'ws');
+  url.searchParams.set('add', '104.19.14.203#洛杉矶优选-01');
+
+  const response = await worker.fetch(new Request(url, {
+    headers: { 'User-Agent': 'Shadowrocket' },
+  }), {});
+  const [node] = decodeSubscription(await response.text());
+
+  assert.match(decodeURIComponent(node), /#洛杉矶优选-01$/);
+  assert.doesNotMatch(decodeURIComponent(node), /UUID 未设置/);
+});
