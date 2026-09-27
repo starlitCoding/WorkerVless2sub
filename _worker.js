@@ -464,77 +464,6 @@ function utf8ToBase64(str) {
 	return btoa(unescape(encodeURIComponent(str)));
 }
 
-function base64ToUtf8(str) {
-	return decodeURIComponent(escape(atob(str)));
-}
-
-function yamlString(value) {
-	return JSON.stringify(String(value ?? ''));
-}
-
-function vmessLinksToClashYaml(content) {
-	const proxies = content
-		.split(/\r?\n/)
-		.map(line => line.trim())
-		.filter(line => line.startsWith('vmess://'))
-		.map(line => JSON.parse(base64ToUtf8(line.slice('vmess://'.length))));
-
-	const proxyNames = proxies.map(proxy => proxy.ps || proxy.add);
-	const proxyBlocks = proxies.map(proxy => {
-		const tls = proxy.tls === 'tls';
-		const port = Number(proxy.port);
-		const lines = [
-			`  - name: ${yamlString(proxy.ps || proxy.add)}`,
-			`    type: vmess`,
-			`    server: ${yamlString(proxy.add)}`,
-			`    port: ${Number.isNaN(port) ? yamlString(proxy.port) : port}`,
-			`    uuid: ${yamlString(proxy.id)}`,
-			`    alterId: ${Number(proxy.aid || 0)}`,
-			`    cipher: ${yamlString(proxy.scy || 'auto')}`,
-			`    udp: true`,
-			`    tls: ${tls ? 'true' : 'false'}`,
-		];
-
-		if (tls && proxy.sni) lines.push(`    servername: ${yamlString(proxy.sni)}`);
-		if (proxy.alpn) {
-			const alpnItems = String(proxy.alpn).split(',').map(item => item.trim()).filter(Boolean);
-			if (alpnItems.length > 0) {
-				lines.push(`    alpn:`);
-				for (const item of alpnItems) lines.push(`      - ${yamlString(item)}`);
-			}
-		}
-		if (proxy.net === 'ws') {
-			lines.push(`    network: ws`);
-			lines.push(`    ws-opts:`);
-			lines.push(`      path: ${yamlString(proxy.path || '/')}`);
-			if (proxy.host) {
-				lines.push(`      headers:`);
-				lines.push(`        Host: ${yamlString(proxy.host)}`);
-			}
-		}
-		return lines.join('\n');
-	});
-
-	const groupProxyLines = proxyNames.map(name => `      - ${yamlString(name)}`).join('\n');
-
-	return [
-		`mixed-port: 7890`,
-		`allow-lan: false`,
-		`mode: rule`,
-		`log-level: info`,
-		`proxies:`,
-		proxyBlocks.join('\n'),
-		`proxy-groups:`,
-		`  - name: "PROXY"`,
-		`    type: select`,
-		`    proxies:`,
-		groupProxyLines,
-		`rules:`,
-		`  - MATCH,PROXY`,
-		``,
-	].join('\n');
-}
-
 async function subHtml(request) {
 	const url = new URL(request.url);
 	const HTML = `
@@ -1494,24 +1423,7 @@ export default {
 				console.log("notlsresponseBody: " + notlsresponseBody);
 			}
 
-			const isClashRequest = 协议类型 == 'VMess' && (userAgent.includes('clash') || userAgent.includes('meta') || userAgent.includes('mihomo') || (format === 'clash' && !isSubConverterRequest)) && !userAgent.includes('nekobox') && !userAgent.includes('cf-workers-sub');
-			const clashConverter = (url.searchParams.get('converter') || url.searchParams.get('external') || '').toLowerCase();
-			const useExternalClashConverter = clashConverter === 'external' || clashConverter === 'subconverter' || clashConverter === '1' || clashConverter === 'true';
-			if (isClashRequest && !useExternalClashConverter) {
-				return new Response(vmessLinksToClashYaml(combinedContent), {
-					headers: {
-						...responseHeaders,
-						"content-type": "text/yaml; charset=utf-8",
-					},
-				});
-			}
-
-			if (isClashRequest && useExternalClashConverter) {
-				const vmessLinks = combinedContent.split('\n');
-				const vmessLinksJ8 = generateFakeInfo(vmessLinks.join('|'), uuid, host);
-				subConverterUrl = `${subProtocol}://${subConverter}/sub?target=clash&url=${encodeURIComponent(vmessLinksJ8)}&insert=false&config=${encodeURIComponent(subConfig)}&emoji=true&list=false&tfo=false&scv=${scv}&fdn=false&sort=false&new_name=true`;
-				responseHeaders["content-type"] = "text/yaml; charset=utf-8";
-			} else if (协议类型 == atob('VHJvamFu') && (userAgent.includes('surge') || (format === 'surge' && !isSubConverterRequest)) && !userAgent.includes('cf-workers-sub')) {
+			if (协议类型 == atob('VHJvamFu') && (userAgent.includes('surge') || (format === 'surge' && !isSubConverterRequest)) && !userAgent.includes('cf-workers-sub')) {
 				const 特洛伊Links = combinedContent.split('\n');
 				const 特洛伊LinksJ8 = generateFakeInfo(特洛伊Links.join('|'), uuid, host);
 				subConverterUrl = `${subProtocol}://${subConverter}/sub?target=surge&ver=4&url=${encodeURIComponent(特洛伊LinksJ8)}&insert=false&config=${encodeURIComponent(subConfig)}&emoji=true&list=false&xudp=false&udp=false&tfo=false&expand=true&scv=${scv}&fdn=false`;

@@ -87,7 +87,7 @@ test('home page exposes preferred IP input and preserves non-default port in gen
   assert.doesNotMatch(html, /window\.location\.hostname/);
 });
 
-test('returns built-in Clash YAML for Clash user agents', async () => {
+test('returns generic VMess subscription for Clash user agents', async () => {
   const url = new URL('https://example.com:2083/sub');
   url.searchParams.set('host', 'star.shadowrocket666.dpdns.org');
   url.searchParams.set('uuid', 'ec544097-aa05-46e3-a04e-a0d7466b2f11');
@@ -102,56 +102,11 @@ test('returns built-in Clash YAML for Clash user agents', async () => {
   const response = await worker.fetch(new Request(url, {
     headers: { 'User-Agent': 'Clash.Meta' },
   }), {});
-  const yaml = await response.text();
+  const nodes = decodeSubscription(await response.text()).map(decodeVmess);
 
-  assert.equal(response.headers.get('content-type'), 'text/yaml; charset=utf-8');
-  assert.match(yaml, /proxies:/);
-  assert.match(yaml, /type: vmess/);
-  assert.match(yaml, /server: "104.17.157.42"/);
-  assert.match(yaml, /servername: "star.shadowrocket666.dpdns.org"/);
-  assert.ok(yaml.includes('path: "/la"'));
-  assert.match(yaml, /proxy-groups:/);
-  assert.doesNotMatch(yaml, /^dm1lc3M/m);
-});
-
-test('can route VMess Clash subscriptions through the external converter', async () => {
-  const originalFetch = globalThis.fetch;
-  let converterUrl = '';
-  let converterUserAgent = '';
-  globalThis.fetch = async (input, init) => {
-    converterUrl = String(input instanceof Request ? input.url : input);
-    converterUserAgent = init?.headers?.['User-Agent'] || '';
-    return new Response('proxies:\n  - name: converted-by-subconverter\nproxy-groups: []\nrules:\n  - MATCH,DIRECT\n');
-  };
-
-  try {
-    const url = new URL('https://example.com:2083/sub');
-    url.searchParams.set('format', 'clash');
-    url.searchParams.set('converter', 'external');
-    url.searchParams.set('host', 'star.shadowrocket666.dpdns.org');
-    url.searchParams.set('uuid', 'ec544097-aa05-46e3-a04e-a0d7466b2f11');
-    url.searchParams.set('path', '/la');
-    url.searchParams.set('sni', 'star.shadowrocket666.dpdns.org');
-    url.searchParams.set('type', 'none');
-    url.searchParams.set('alterid', '0');
-    url.searchParams.set('security', 'auto');
-    url.searchParams.set('add', '104.17.157.42#洛杉矶优选-01');
-
-    const response = await worker.fetch(new Request(url, {
-      headers: { 'User-Agent': 'Clash.Meta' },
-    }), {});
-    const yaml = await response.text();
-
-    assert.equal(response.headers.get('content-type'), 'text/yaml; charset=utf-8');
-    assert.match(converterUrl, /target=clash/);
-    assert.match(converterUrl, /config=/);
-    assert.doesNotMatch(converterUserAgent, /[^\x00-\x7F]/);
-    assert.doesNotMatch(converterUrl, /ec544097-aa05-46e3-a04e-a0d7466b2f11/);
-    assert.doesNotMatch(yaml, /^dm1lc3M/m);
-    assert.match(yaml, /converted-by-subconverter/);
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
+  assert.equal(response.headers.get('content-type'), 'text/plain; charset=utf-8');
+  assert.equal(nodes.length, 2);
+  assert.deepEqual(nodes.map(node => node.add), ['star.shadowrocket666.dpdns.org', '104.17.157.42']);
 });
 
 test('does not leak missing built-in UUID warning into custom VLESS subscriptions', async () => {
